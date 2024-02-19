@@ -9,10 +9,12 @@ from utils.utils import *
 
 import argparse
 
+import argparse
+
 class Args:
     def __init__(self):
         self.batch_size = 128
-        self.epochs = 300
+        self.epochs = 15000
         self.bce_loss = False
         self.unscale_lr = False
         # self.model = 'deit_base_patch16_224'
@@ -85,7 +87,7 @@ class Args:
         self.data_set = 'CIFAR10'
         self.inat_category = 'name'
 
-        self.output_dir = './model'
+        self.output_dir = 'model'
         self.device = 'cuda'
         self.seed = 0
         self.resume = ''
@@ -109,17 +111,19 @@ class Args:
         self.resize = 32
         self.randaug = [2, 16]  # Example default values, change as needed
         self.expand_labels = True
-        self.eval_step = 300
+        self.eval_step = 52
         self.workers = 1
         self.mu = 7
         self.nb_classes = 10
         self.threshold = 0.6
         self.lambda_u = 8
+        self.eval_step = 300
 
 # Example usage:
 args = Args()
 # print(args.batch_size)
 # print(args.lr)
+
 
 
 # Copyright (c) 2015-present, Facebook, Inc.
@@ -434,6 +438,11 @@ class BatchSampler(Sampler[List[int]]):
 
 
 
+
+
+
+
+
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 
 def main(args):
@@ -741,31 +750,31 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
+        if (epoch + 1) % args.eval_step == 0:
+          test_stats = evaluate(data_loader_val, model, device, amp_autocast)
+          print(f"Accuracy of the network on the {len(test_dataset)} test images: {test_stats['acc1']:.1f}%")
 
-        test_stats = evaluate(data_loader_val, model, device, amp_autocast)
-        print(f"Accuracy of the network on the {len(test_dataset)} test images: {test_stats['acc1']:.1f}%")
+          if max_accuracy < test_stats["acc1"]:
+              max_accuracy = test_stats["acc1"]
+              if args.output_dir:
+                  checkpoint_paths = [output_dir / 'best_checkpoint.pth']
+                  for checkpoint_path in checkpoint_paths:
+                      save_on_master({
+                          'model': model_without_ddp.state_dict(),
+                          'optimizer': optimizer.state_dict(),
+                          'lr_scheduler': lr_scheduler.state_dict(),
+                          'epoch': epoch,
+                          'model_ema': get_state_dict(model_ema),
+                          'scaler': loss_scaler.state_dict() if loss_scaler != 'none' else loss_scaler,
+                          'args': args,
+                      }, checkpoint_path)
 
-        if max_accuracy < test_stats["acc1"]:
-            max_accuracy = test_stats["acc1"]
-            if args.output_dir:
-                checkpoint_paths = [output_dir / 'best_checkpoint.pth']
-                for checkpoint_path in checkpoint_paths:
-                    save_on_master({
-                        'model': model_without_ddp.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'lr_scheduler': lr_scheduler.state_dict(),
-                        'epoch': epoch,
-                        'model_ema': get_state_dict(model_ema),
-                        'scaler': loss_scaler.state_dict() if loss_scaler != 'none' else loss_scaler,
-                        'args': args,
-                    }, checkpoint_path)
+          print(f'Max accuracy: {max_accuracy:.2f}%')
 
-        print(f'Max accuracy: {max_accuracy:.2f}%')
-
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'test_{k}': v for k, v in test_stats.items()},
-                     'epoch': epoch,
-                     'n_parameters': n_parameters}
+          log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                      **{f'test_{k}': v for k, v in test_stats.items()},
+                      'epoch': epoch,
+                      'n_parameters': n_parameters}
 
         # log about
         # if args.local_rank == 0 and args.gpu == 0:
@@ -773,9 +782,9 @@ def main(args):
         #         mlflow.log_metric(key, value, log_stats['epoch'])
 
 
-        if args.output_dir and is_main_process():
-            with (output_dir / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
+          if args.output_dir and is_main_process():
+              with (output_dir / "log.txt").open("a") as f:
+                  f.write(json.dumps(log_stats) + "\n")
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
